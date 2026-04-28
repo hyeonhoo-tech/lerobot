@@ -89,6 +89,9 @@ class RecordControlConfig(ControlConfig):
     resume: bool = False
     # Interval (in number of episodes) to save a checkpoint of the dataset.
     save_interval: int = 1
+    # Path to stationary_ai.urdf. If provided, FK is computed after recording and EEF poses are
+    # saved as a new dataset at {repo_id}_eef.
+    urdf_path: str | None = None
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
