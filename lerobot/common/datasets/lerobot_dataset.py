@@ -573,6 +573,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         license: str | None = "apache-2.0",
         tag_version: bool = True,
         push_videos: bool = True,
+        push_raw_depth: bool = False,
         private: bool = False,
         allow_patterns: list[str] | str | None = None,
         upload_large_folder: bool = False,
@@ -581,6 +582,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         ignore_patterns = ["images/"]
         if not push_videos:
             ignore_patterns.append("videos/")
+        if not push_raw_depth:
+            # Raw uint16 depth is saved as `.npy` alongside each depth video.
+            # It's large and only generated locally for downstream tools (e.g.
+            # Phantom). Off by default so we don't blow up public repos.
+            ignore_patterns.append("videos/**/*.npy")
 
         hub_api = HfApi()
         hub_api.create_repo(
@@ -843,6 +849,38 @@ class LeRobotDataset(torch.utils.data.Dataset):
             write_depth_image(image, fpath)
         else:
             self.image_writer.save_depth_image(image=image, fpath=fpath)
+
+    def _save_raw_depth_npy(self, episode_index: int, key: str) -> Path | None:
+        """Stack per-frame depth PNGs for `key` into a raw uint16 .npy alongside the mp4.
+
+        Lossy video encoding destroys the mm-level precision RealSense provides,
+        which makes the encoded mp4 unusable for downstream depth-based tasks
+        (e.g. ICP-based hand pose refinement in Phantom). This helper preserves
+        the original uint16 depth (in millimeters) by reading back the lossless
+        PNGs that were written before video encoding.
+        """
+        img_dir = self._get_image_file_path(
+            episode_index=episode_index, image_key=key, frame_index=0
+        ).parent
+        png_paths = sorted(
+            img_dir.glob("frame_*.png"),
+            key=lambda p: int(p.stem.split("_")[1]),
+        )
+        if not png_paths:
+            return None
+
+        frames = []
+        for p in png_paths:
+            arr = np.array(PIL.Image.open(p))
+            if arr.dtype != np.uint16:
+                arr = np.clip(arr, 0, 65535).astype(np.uint16)
+            frames.append(arr)
+        depth_volume = np.stack(frames, axis=0)
+
+        npy_path = (self.root / self.meta.get_video_file_path(episode_index, key)).with_suffix(".npy")
+        npy_path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(npy_path, depth_volume)
+        return npy_path
 
     def add_frame(self, frame: dict) -> None:
         """
@@ -1121,6 +1159,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
             img_dir = self._get_image_file_path(
                 episode_index=episode_index, image_key=key, frame_index=0
             ).parent
+
+            # For depth features, stack the lossless PNG frames into a raw uint16
+            # .npy before encoding the (lossy) mp4. The PNG image dir is deleted
+            # after encoding, so this must run first.
+            if "depth" in self.features[key].get("names", []):
+                self._save_raw_depth_npy(episode_index, key)
+
             encode_video_frames(img_dir, video_path, self.fps, overwrite=True)
 
         return video_paths

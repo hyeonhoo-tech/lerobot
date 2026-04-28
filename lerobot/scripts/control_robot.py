@@ -368,7 +368,28 @@ def record(
     if cfg.push_to_hub:
         dataset.push_to_hub(tags=cfg.tags, private=cfg.private)
 
+    
+    if cfg.urdf_path is not None:
+
+        log_say("Computing EEF poses via FK...", cfg.play_sounds)
+
+        from lerobot.scripts.add_fk_to_dataset import add_fk_to_dataset
+
+        eef_repo_id = cfg.repo_id + "_eef"
+        eef_root = str(cfg.root) + "_eef" if cfg.root else None
+        add_fk_to_dataset(
+        dataset=dataset,
+        urdf_path=cfg.urdf_path,
+        output_repo_id=eef_repo_id,
+        output_root=eef_root,
+        push_to_hub=cfg.push_to_hub,
+
+        )
+
+        log_say("EEF dataset saved.", cfg.play_sounds)
+
     log_say("Exiting", cfg.play_sounds)
+
     return dataset
 
 

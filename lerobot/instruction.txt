@@ -19,4 +19,4 @@ rm -rf /home/yigit/.cache/huggingface/lerobot/ykorkmaz/[DEMO_NAME] -> if you enc
 
 
 
-python lerobot/scripts/control_robot.py --robot.type=trossen_ai_stationary --robot.max_relative_target=null --control.type=record --control.fps=30 --control.single_task="Open the drawer" --control.repo_id=${HF_USER}/trial_426_1 --control.tags='["tutorial"]' --control.warmup_time_s=5 --control.episode_time_s=60 --control.reset_time_s=10 --control.num_episodes=1  --control.push_to_hub=true
+python lerobot/scripts/control_robot.py --robot.type=trossen_ai_stationary --robot.max_relative_target=null --control.type=record --control.fps=30 --control.single_task="Open the drawer" --control.repo_id=${HF_USER}/trial_426_1 --control.tags='["tutorial"]' --control.warmup_time_s=5 --control.episode_time_s=60 --control.reset_time_s=10 --control.num_episodes=1  --control.push_to_hub=true --control.push_raw_depth=true --control.urdf_path /root/lerobot/data_processing/stationary_ai.rudf

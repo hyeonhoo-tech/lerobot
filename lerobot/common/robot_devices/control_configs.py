@@ -68,6 +68,11 @@ class RecordControlConfig(ControlConfig):
     video: bool = True
     # Upload dataset to Hugging Face hub.
     push_to_hub: bool = True
+    # Whether to also upload raw uint16 depth `.npy` files (saved alongside the
+    # lossy depth mp4 for downstream pipelines like Phantom). Off by default:
+    # the npys are large (~1 GB / episode / depth cam) and usually only needed
+    # locally.
+    push_raw_depth: bool = False
     # Upload on private repository on the Hugging Face hub.
     private: bool = False
     # Add tags to your dataset on the hub.
@@ -87,6 +92,7 @@ class RecordControlConfig(ControlConfig):
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    urdf_path: str | None = None
     # Interval (in number of episodes) to save a checkpoint of the dataset.
     save_interval: int = 1
 
