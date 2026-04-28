@@ -34,7 +34,7 @@ from huggingface_hub.errors import RevisionNotFoundError
 from lerobot.common.constants import HF_LEROBOT_HOME
 from lerobot.common.datasets.backward_compatibility import SubVersionBackwardCompatibilityError
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_episode_stats
-from lerobot.common.datasets.image_writer import AsyncImageWriter, write_image
+from lerobot.common.datasets.image_writer import AsyncImageWriter, write_image, write_depth_image
 from lerobot.common.datasets.utils import (
     DEFAULT_FEATURES,
     DEFAULT_IMAGE_PATH,
@@ -69,6 +69,7 @@ from lerobot.common.datasets.utils import (
 )
 from lerobot.common.datasets.video_utils import (
     VideoFrame,
+    DepthFrame,
     decode_video_frames,
     encode_video_frames,
     get_safe_default_codec,
@@ -93,7 +94,6 @@ class LeRobotDatasetMetadata:
         self.revision = revision if revision else CODEBASE_VERSION
         self.root = Path(root) if root is not None else HF_LEROBOT_HOME / repo_id
         self.edit_mode = edit_mode
-
         try:
             if force_cache_sync:
                 raise FileNotFoundError
@@ -219,12 +219,8 @@ class LeRobotDatasetMetadata:
 
     @property
     def total_frames(self) -> int:
-        """Total number of frames saved in this dataset."""
-        return self.info["total_frames"]
-
-    @property
-    def total_tasks(self) -> int:
-        """Total number of different tasks performed in this dataset."""
+        """Total number o
+                    img_path.parent.mkdir(parents=True, exist_ok=Tr different tasks performed in this dataset."""
         return self.info["total_tasks"]
 
     @property
@@ -840,6 +836,14 @@ class LeRobotDataset(torch.utils.data.Dataset):
         else:
             self.image_writer.save_image(image=image, fpath=fpath)
 
+    def _save_depth_image(self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path) -> None:
+        if self.image_writer is None:
+            if isinstance(image, torch.Tensor):
+                image = image.cpu().numpy()
+            write_depth_image(image, fpath)
+        else:
+            self.image_writer.save_depth_image(image=image, fpath=fpath)
+
     def add_frame(self, frame: dict) -> None:
         """
         This function only adds the frame to the episode_buffer. Apart from images — which are written in a
@@ -880,11 +884,13 @@ class LeRobotDataset(torch.utils.data.Dataset):
                 )
                 if frame_index == 0:
                     img_path.parent.mkdir(parents=True, exist_ok=True)
-                self._save_image(frame[key], img_path)
+                if "depth" in self.features[key]["names"]:
+                    self._save_depth_image(frame[key], img_path)
+                else:
+                    self._save_image(frame[key], img_path)
                 self.episode_buffer[key].append(str(img_path))
             else:
                 self.episode_buffer[key].append(frame[key])
-
         self.episode_buffer["size"] += 1
 
     def add_episode_to_batch(self, episode_data: dict | None = None) -> None:
@@ -1294,6 +1300,20 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             if isinstance(feats, VideoFrame):
                 video_frame_keys.append(key)
         return video_frame_keys
+    
+    @property
+    def depth_frame_keys(self) -> list[str]:
+        """Keys to access video frames that requires to be decoded into images.
+
+        Note: It is empty if the dataset contains images only,
+        or equal to `self.cameras` if the dataset contains videos only,
+        or can even be a subset of `self.cameras` in a case of a mixed image/video dataset.
+        """
+        depth_frame_keys = []
+        for key, feats in self.hf_dataset.features.items():
+            if isinstance(feats, DepthFrame):
+                depth_frame_keys.append(key)
+        return depth_frame_keys
 
     @property
     def num_frames(self) -> int:

@@ -265,7 +265,7 @@ def control_loop(
             dataset.add_frame(frame)
 
         if display_cameras and not is_headless():
-            image_keys = [key for key in observation if "image" in key]
+            image_keys = [key for key in observation if "image" in key and "depth" not in key]
             for key in image_keys:
                 cv2.imshow(key, cv2.cvtColor(observation[key].numpy(), cv2.COLOR_RGB2BGR))
             cv2.waitKey(1)
@@ -288,12 +288,12 @@ def control_loop(
 
 def reset_environment(robot, events, reset_time_s, fps):
     # TODO(rcadene): refactor warmup_record and reset_environment
-    if has_method(robot, "teleop_safety_stop"):
-        robot.teleop_safety_stop()
-
     if robot.robot_type in ["trossen_ai_stationary", "trossen_ai_solo", "trossen_ai_mobile"]:
-        time.sleep(reset_time_s)
+        robot.teleop_safety_stop(wait_time=reset_time_s)
+    elif has_method(robot, "teleop_safety_stop"):
+        robot.teleop_safety_stop()
     else:
+        ## Hopefully we do not enter into this case
         control_loop(
             robot=robot,
             control_time_s=reset_time_s,

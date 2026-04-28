@@ -182,6 +182,12 @@ class ManipulatorRobot:
                 "names": ["height", "width", "channels"],
                 "info": None,
             }
+            if cam.use_depth:
+                cam_ft[f"{key}_depth"] = {
+                    "shape": (cam.height, cam.width, 1),
+                    "names": ["height", "width", "depth"],
+                    "info": None,
+                }
         return cam_ft
 
     @property
@@ -224,13 +230,13 @@ class ManipulatorRobot:
             available_arms.append(arm_id)
         return available_arms
 
-    def teleop_safety_stop(self):
+    def teleop_safety_stop(self, wait_time=2):
         if self.robot_type in ["trossen_ai_stationary", "trossen_ai_solo"]:
             for arms in self.leader_arms:
                 self.leader_arms[arms].write("Reset", 1)
             for arms in self.follower_arms:
                 self.follower_arms[arms].write("Reset", 1)
-            time.sleep(2)
+            time.sleep(wait_time)
             for arms in self.leader_arms:
                 self.leader_arms[arms].write("Torque_Enable", 0)
             for arms in self.follower_arms:
@@ -534,7 +540,13 @@ class ManipulatorRobot:
         for name in self.cameras:
             before_camread_t = time.perf_counter()
             images[name] = self.cameras[name].async_read()
-            images[name] = torch.from_numpy(images[name])
+            # Check if images[name] is a tuple and select the first element if so
+            if isinstance(images[name], tuple):
+                images_1 = images[name][1].astype('int32')
+                images[name] = (images[name][0], images_1)
+                images[name] = tuple(torch.from_numpy(arr) for arr in images[name])
+            else:
+                images[name] = torch.from_numpy(images[name])
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
 
@@ -544,7 +556,11 @@ class ManipulatorRobot:
             obs_dict["observation.state"] = state
         action_dict["action"] = action
         for name in self.cameras:
-            obs_dict[f"observation.images.{name}"] = images[name]
+            if isinstance(images[name], tuple):
+                obs_dict[f"observation.images.{name}"] = images[name][0]
+                obs_dict[f"observation.images.{name}_depth"] = images[name][1].unsqueeze(-1)
+            else:
+                obs_dict[f"observation.images.{name}"] = images[name]
 
         return obs_dict, action_dict
 
@@ -583,7 +599,12 @@ class ManipulatorRobot:
         obs_dict = {}
         obs_dict["observation.state"] = state
         for name in self.cameras:
-            obs_dict[f"observation.images.{name}"] = images[name]
+            if isinstance(images[name], tuple):
+                obs_dict[f"observation.images.{name}"] = images[name][0]
+                obs_dict[f"observation.images.{name}_depth"] = images[name][1]
+
+            else:
+                obs_dict[f"observation.images.{name}"] = images[name]
         return obs_dict
 
     def send_action(self, action: torch.Tensor) -> torch.Tensor:

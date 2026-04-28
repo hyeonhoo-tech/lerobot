@@ -28,6 +28,7 @@ import torch
 import torchvision
 from datasets.features.features import register_feature
 from PIL import Image
+import numpy as np
 
 from lerobot.common.constants import GOP_SIZE, GPU_ENCODING, GPU_ID
 
@@ -323,6 +324,23 @@ def encode_video_frames(
             f"Try running the command manually to debug: `{''.join(ffmpeg_cmd)}`"
         )
 
+@dataclass
+class DepthFrame:
+    """
+    Provides a type for a dataset containing depth frames.
+    Example:
+    ```python
+    data_dict = [{"image": {"path": "videos/observation.depth.cam_high_episode_000000/frame_000000.png"}}]
+    features = {"image": DepthFrame()}
+    Dataset.from_dict(data_dict, features=Features(features))
+    ```
+    """
+
+    pa_type: ClassVar[Any] = pa.struct({"path": pa.string()})
+    _type: str = field(default="DepthFrame", init=False, repr=False)
+
+    def __call__(self):
+        return self.pa_type
 
 @dataclass
 class VideoFrame:
@@ -354,6 +372,7 @@ with warnings.catch_warnings():
     )
     # to make VideoFrame available in HuggingFace `datasets`
     register_feature(VideoFrame, "VideoFrame")
+    register_feature(DepthFrame, "DepthFrame")
 
 
 def get_audio_info(video_path: Path | str) -> dict:

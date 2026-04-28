@@ -232,6 +232,10 @@ def get_features_from_hf_dataset(
             dtype = "video"
             shape = None  # Add shape later
             names = ["height", "width", "channels"]
+        elif ft._type == "DepthFrame":
+            dtype = "depth"
+            shape = (image.height, image.width, 1)
+            names = ["height", "width", "depth"]
 
         features[key] = {
             "dtype": dtype,

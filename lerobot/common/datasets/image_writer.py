@@ -80,6 +80,29 @@ def write_image(image: np.ndarray | PIL.Image.Image, fpath: Path):
     except Exception as e:
         print(f"Error writing image {fpath}: {e}")
 
+def write_depth_image(image_array: np.ndarray, fpath: Path):
+    try:
+        image_array = np.squeeze(image_array)
+        if image_array.ndim != 2:
+            raise ValueError(
+                f"Depth image must be 2D after squeezing, got shape {image_array.shape} with {image_array.ndim} dimensions"
+            )
+        if image_array.dtype != np.uint16:
+            if image_array.dtype in [np.float32, np.float64]:
+                image_array = (image_array * 1000).astype(np.uint16)
+            elif image_array.dtype in [np.int32, np.int64]:
+                image_array = np.clip(image_array, 0, 65535).astype(np.uint16)
+            elif image_array.dtype == np.uint8:
+                image_array = image_array.astype(np.uint16) * 256
+            else:
+                image_array = np.clip(image_array, 0, 65535).astype(np.uint16)
+        image_array = np.ascontiguousarray(image_array)
+        
+        image_array_int32 = image_array.astype(np.int32)
+        img = PIL.Image.fromarray(image_array_int32, mode='I')
+        img.save(fpath)
+    except Exception as e:
+        print(f"Error writing depth image {fpath}: {e}")
 
 def worker_thread_loop(queue: queue.Queue):
     while True:
@@ -87,8 +110,11 @@ def worker_thread_loop(queue: queue.Queue):
         if item is None:
             queue.task_done()
             break
-        image_array, fpath = item
-        write_image(image_array, fpath)
+        image_array, fpath, is_depth = item
+        if is_depth:
+            write_depth_image(image_array, fpath)
+        else:
+            write_image(image_array, fpath)
         queue.task_done()
 
 
@@ -150,8 +176,16 @@ class AsyncImageWriter:
         if isinstance(image, torch.Tensor):
             # Convert tensor to numpy array to minimize main process time
             image = image.cpu().numpy()
-        self.queue.put((image, fpath))
-
+        is_depth = False
+        self.queue.put((image, fpath, is_depth))
+    
+    def save_depth_image(self, image: torch.Tensor | np.ndarray | PIL.Image.Image, fpath: Path):
+        if isinstance(image, torch.Tensor):
+            # Convert tensor to numpy array to minimize main process time
+            image = image.cpu().numpy().astype(np.uint16)
+        is_depth = True
+        self.queue.put((image, fpath, is_depth))
+    
     def wait_until_done(self):
         self.queue.join()
 

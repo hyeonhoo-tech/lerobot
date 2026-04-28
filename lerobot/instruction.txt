@@ -1,0 +1,22 @@
+1. Turn on the robot arms but keep in your mind that robots arms should be fixed
+
+2. cd /home/yigit/lerobot
+
+3. conda activate lerobot
+
+4. python ~/aloha_trial/teleoperation.py -> checking the setup before collecting demos
+
+5. /home/yigit/lerobot/lerobot/common/robot_devices/motors/trossen_arm_driver.py - line 77 -> you can set initial pose for robot arms
+
+6. python lerobot/scripts/control_robot.py --robot.type=trossen_ai_stationary --robot.max_relative_target=null --control.type=record --control.fps=30 --control.single_task="Pilot play dataset." --control.repo_id=${HF_USER}/<YOUR_DEMO_NAME> --control.tags='["tutorial"]' --control.warmup_time_s=5 --control.episode_time_s=180 --control.reset_time_s=10 --control.num_episodes=1  --control.push_to_hub=true
+
+If you want to retry data collection, press <- . 
+
+rm -rf /home/yigit/.cache/huggingface/lerobot/ykorkmaz/[DEMO_NAME] -> if you encounter same folder error, you can delete the folder
+
+
+
+
+
+
+python lerobot/scripts/control_robot.py --robot.type=trossen_ai_stationary --robot.max_relative_target=null --control.type=record --control.fps=30 --control.single_task="Open the drawer" --control.repo_id=${HF_USER}/trial_426_1 --control.tags='["tutorial"]' --control.warmup_time_s=5 --control.episode_time_s=60 --control.reset_time_s=10 --control.num_episodes=1  --control.push_to_hub=true

@@ -632,7 +632,7 @@ class TrossenAIStationaryRobotConfig(ManipulatorRobotConfig):
     # Gain applied to external efforts sensed on the follower arm and transmitted to the leader arm.
     # This enables the user to feel external forces (e.g., contact with objects) through force feedback.
     # A value of 0.0 disables force feedback. A good starting value for a responsive experience is 0.1.
-    force_feedback_gain: float = 0.0
+    force_feedback_gain: float = 0.1
 
     # Multiplier for computing minimum time (in seconds) for the arm to reach a target position.
     # The final goal time is computed as: min_time_to_move = multiplier / fps.
@@ -717,25 +717,27 @@ class TrossenAIStationaryRobotConfig(ManipulatorRobotConfig):
             # on another USB hub or PCIe card.
             self.cameras: dict[str, CameraConfig] = {
                 "cam_high": IntelRealSenseCameraConfig(
-                    serial_number=218622274938,
+                    serial_number=130322271752,
                     fps=30,
                     width=640,
                     height=480,
+                    use_depth=True,
                 ),
                 "cam_low": IntelRealSenseCameraConfig(
-                    serial_number=130322272628,
+                    serial_number=130322272750,
                     fps=30,
                     width=640,
                     height=480,
+                    use_depth=True,
                 ),
                 "cam_left_wrist": IntelRealSenseCameraConfig(
-                    serial_number=128422271347,
+                    serial_number=130322271535,
                     fps=30,
                     width=640,
                     height=480,
                 ),
                 "cam_right_wrist": IntelRealSenseCameraConfig(
-                    serial_number=218622270304,
+                    serial_number=130322273480,
                     fps=30,
                     width=640,
                     height=480,
@@ -766,7 +768,7 @@ class TrossenAISoloRobotConfig(ManipulatorRobotConfig):
     # Gain applied to external efforts sensed on the follower arm and transmitted to the leader arm.
     # This enables the user to feel external forces (e.g., contact with objects) through force feedback.
     # A value of 0.0 disables force feedback. A good starting value for a responsive experience is 0.1.
-    force_feedback_gain: float = 0.0
+    force_feedback_gain: float = 0.1
 
     # Multiplier for computing minimum time (in seconds) for the arm to reach a target position.
     # The final goal time is computed as: min_time_to_move = multiplier / fps.
@@ -828,13 +830,13 @@ class TrossenAISoloRobotConfig(ManipulatorRobotConfig):
             # on another USB hub or PCIe card.
             self.cameras: dict[str, CameraConfig] = {
                 "cam_main": IntelRealSenseCameraConfig(
-                    serial_number=130322270184,
+                    serial_number=130322271752,
                     fps=30,
                     width=640,
                     height=480,
                 ),
                 "cam_wrist": IntelRealSenseCameraConfig(
-                    serial_number=218622274938,
+                    serial_number=130322271535,
                     fps=30,
                     width=640,
                     height=480,
@@ -864,7 +866,7 @@ class TrossenAIMobileRobotConfig(RobotConfig):
     # Gain applied to external efforts sensed on the follower arm and transmitted to the leader arm.
     # This enables the user to feel external forces (e.g., contact with objects) through force feedback.
     # A value of 0.0 disables force feedback. A good starting value for a responsive experience is 0.1.
-    force_feedback_gain: float = 0.0
+    force_feedback_gain: float = 0.1
 
     # Multiplier for computing minimum time (in seconds) for the arm to reach a target position.
     # The final goal time is computed as: min_time_to_move = multiplier / fps.
@@ -944,19 +946,19 @@ class TrossenAIMobileRobotConfig(RobotConfig):
             # on another USB hub or PCIe card.
             self.cameras: dict[str, CameraConfig] = {
                 "cam_high": IntelRealSenseCameraConfig(
-                    serial_number=130322270184,
+                    serial_number=130322271752,
                     fps=30,
                     width=640,
                     height=480,
                 ),
                 "cam_left_wrist": IntelRealSenseCameraConfig(
-                    serial_number=218622274938,
+                    serial_number=130322271535,
                     fps=30,
                     width=640,
                     height=480,
                 ),
                 "cam_right_wrist": IntelRealSenseCameraConfig(
-                    serial_number=128422271347,
+                    serial_number=130322273480,
                     fps=30,
                     width=640,
                     height=480,

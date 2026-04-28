@@ -92,12 +92,12 @@ class TrossenAIMobile:
             available_arms.append(arm_id)
         return available_arms
 
-    def teleop_safety_stop(self):
+    def teleop_safety_stop(self, wait_time=2):
         for arms in self.leader_arms:
             self.leader_arms[arms].write("Reset", 1)
         for arms in self.follower_arms:
             self.follower_arms[arms].write("Reset", 1)
-        time.sleep(2)
+        time.sleep(wait_time)
         for arms in self.leader_arms:
             self.leader_arms[arms].write("Torque_Enable", 0)
         for arms in self.follower_arms:
