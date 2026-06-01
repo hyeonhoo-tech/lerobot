@@ -199,6 +199,8 @@ class ManipulatorRobot:
                 lock_orientation=lock_orientation,
                 locked_pitch_offset_deg=getattr(self.config, "locked_pitch_offset_deg", 0.0),
                 soft_start_s=getattr(self.config, "constraint_soft_start_s", 2.0),
+                max_xy_step=getattr(self.config, "constraint_max_xy_step", 0.01),
+                feasible_z_tol=getattr(self.config, "constraint_feasible_z_tol", 0.02),
             )
         return constraints
 
@@ -530,22 +532,23 @@ class ManipulatorRobot:
             before_fwrite_t = time.perf_counter()
             goal_pos = leader_pos[name]
 
-            # Apply optional teleoperation constraints (z-axis / orientation / wrist lock)
-            # BEFORE the safety cap, so the cap also limits the IK output (the constrained
-            # goal can be far from the current pose, e.g. when starting at a low locked_z).
+            # Cap goal position when too far away from present position.
+            # Slower fps expected due to reading from the follower.
+            # NOTE: this per-joint cap runs BEFORE the constraint. Applying it AFTER the IK
+            # would clip joints independently and pull the end-effector off the locked-z
+            # plane; the constraint instead rate-limits its own (Cartesian) motion.
+            if self.config.max_relative_target is not None:
+                present_pos = self.follower_arms[name].read("Present_Position")
+                present_pos = torch.from_numpy(present_pos)
+                goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
+
+            # Apply optional teleoperation constraints (z-axis / orientation / wrist lock).
             constraint = self._teleop_constraints.get(name)
             if constraint is not None:
                 if not constraint.initialized:
                     follower_present = self.follower_arms[name].read("Present_Position")
                     constraint.initialize_refs(follower_present)
                 goal_pos = torch.from_numpy(constraint.apply(goal_pos.numpy()))
-
-            # Cap goal position when too far away from present position.
-            # Slower fps expected due to reading from the follower.
-            if self.config.max_relative_target is not None:
-                present_pos = self.follower_arms[name].read("Present_Position")
-                present_pos = torch.from_numpy(present_pos)
-                goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
 
             # Used when record_data=True
             follower_goal_pos[name] = goal_pos

@@ -665,6 +665,12 @@ class TrossenAIStationaryRobotConfig(ManipulatorRobotConfig):
     # Seconds to smoothly ease the follower from its starting pose to the constrained goal
     # when teleoperation starts (prevents a sudden jump/drop). Set 0 to disable.
     constraint_soft_start_s: float = 2.0
+    # Max end-effector x-y move per teleop step (meters). Rate-limits fast motions so the IK
+    # stays converged and the EE does not leave the locked-z plane. ~0.01 m at 30fps ≈ 0.3 m/s.
+    constraint_max_xy_step: float = 0.01
+    # If the IK cannot hold the locked height within this tolerance (meters), the follower
+    # holds its last good pose instead of diving (out-of-reach guard).
+    constraint_feasible_z_tol: float = 0.02
     # Path to the URDF used for IK (z-axis lock). Defaults to the repo's stationary_ai.urdf.
     constraint_urdf_path: str | None = None
     # Path to trossen_arm_description for resolving package:// URIs in the URDF, if needed.

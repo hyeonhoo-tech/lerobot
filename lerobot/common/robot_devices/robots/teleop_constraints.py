@@ -89,6 +89,8 @@ class StationaryTeleopConstraint:
         lock_orientation: bool = False,
         locked_pitch_offset_deg: float = 0.0,
         soft_start_s: float = 2.0,
+        max_xy_step: float = 0.01,
+        feasible_z_tol: float = 0.02,
         ik_iters: int = 80,
         ik_tol: float = 1e-3,
         ik_damping: float = 1e-2,
@@ -101,6 +103,8 @@ class StationaryTeleopConstraint:
         self.lock_orientation = lock_orientation
         self.locked_pitch_offset_deg = locked_pitch_offset_deg
         self.soft_start_s = soft_start_s
+        self.max_xy_step = max_xy_step
+        self.feasible_z_tol = feasible_z_tol
         self.ik_iters = ik_iters
         self.ik_tol = ik_tol
         self.ik_damping = ik_damping
@@ -143,6 +147,9 @@ class StationaryTeleopConstraint:
         self.locked_R: np.ndarray | None = None  # orientation reference (set on first apply)
         self._q_start_arm: np.ndarray | None = None  # follower arm joints when teleop starts
         self._t0: float | None = None  # soft-start clock (set on first apply)
+        self._prev_xy: np.ndarray | None = None  # last commanded EE (x, y) for rate limiting
+        self._last_good_arm: np.ndarray | None = None  # last feasible arm goal (z held)
+        self._warned_infeasible = False
         self._initialized = False
 
     @property
@@ -249,6 +256,18 @@ class StationaryTeleopConstraint:
             if self.lock_z:
                 target_pos[2] = self.locked_z
 
+            # Rate-limit the target in the x-y plane so a fast teleop motion does not jump
+            # the target so far that the per-step IK cannot converge (which would let the EE
+            # leave the locked-z plane and dive). Keeps each step's target close to the last.
+            if self.max_xy_step and self.max_xy_step > 0:
+                if self._prev_xy is None:
+                    self._prev_xy = target_pos[:2].copy()
+                delta = target_pos[:2] - self._prev_xy
+                dist = float(np.linalg.norm(delta))
+                if dist > self.max_xy_step:
+                    target_pos[:2] = self._prev_xy + delta * (self.max_xy_step / dist)
+                self._prev_xy = target_pos[:2].copy()
+
             target_R = np.array(oMcur.rotation, dtype=np.float64)
             if self.lock_orientation:
                 if self.locked_R is None:
@@ -270,8 +289,26 @@ class StationaryTeleopConstraint:
             oMdes = pin.SE3(target_R, target_pos)
             free_v = [self.joint_v_idx[j] for j in self.free_arm_joints]
             q = self._solve_ik(q, oMdes, free_v)
-            for j in self.free_arm_joints:
-                goal[j] = q[self.joint_q_idx[j]]
+
+            # z-feasibility guard: if the IK solution does not actually hold the locked height
+            # (target unreachable / under-converged), do NOT send it — hold the last good arm
+            # pose instead, so the gripper never dives into the floor.
+            achieved_z = float(self._fk_pose(q).translation[2])
+            infeasible = self.lock_z and abs(achieved_z - self.locked_z) > self.feasible_z_tol
+            if infeasible and self._last_good_arm is not None:
+                goal[:NUM_ARM_JOINTS] = self._last_good_arm  # freeze arm; gripper still follows
+                if not self._warned_infeasible:
+                    print(
+                        "[TeleopConstraint] target out of reach at locked z "
+                        f"(would land z={achieved_z:.3f}, want {self.locked_z:.3f}); "
+                        "holding position. Move back into the workspace."
+                    )
+                    self._warned_infeasible = True
+            else:
+                for j in self.free_arm_joints:
+                    goal[j] = q[self.joint_q_idx[j]]
+                self._last_good_arm = goal[:NUM_ARM_JOINTS].copy()
+                self._warned_infeasible = False
 
         # 3) Soft start: ease the arm joints from the starting pose to the constrained goal
         # over `soft_start_s` so the follower does not jump (e.g. drop to a low locked_z) on
