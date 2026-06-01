@@ -168,6 +168,35 @@ class ManipulatorRobot:
         self.force_feedback_gain = self.config.force_feedback_gain
         self.is_connected = False
         self.logs = {}
+        # Optional teleoperation constraints (z-axis lock / wrist lock). Empty unless enabled.
+        self._teleop_constraints = self._build_teleop_constraints()
+
+    def _build_teleop_constraints(self) -> dict:
+        """Build per-arm teleoperation constraints if enabled in the config (opt-in)."""
+        lock_wrist = getattr(self.config, "lock_wrist_joints", None)
+        lock_z = getattr(self.config, "lock_z", False)
+        if not lock_wrist and not lock_z:
+            return {}
+
+        from lerobot.common.robot_devices.robots.teleop_constraints import StationaryTeleopConstraint
+
+        urdf_path = getattr(self.config, "constraint_urdf_path", None)
+        if urdf_path is None:
+            urdf_path = Path(__file__).resolve().parents[4] / "stationary_ai.urdf"
+        package_root = getattr(self.config, "constraint_package_root", None)
+
+        constraints = {}
+        for name in self.follower_arms:
+            constraints[name] = StationaryTeleopConstraint(
+                urdf_path=urdf_path,
+                ee_link=f"follower_{name}_ee_gripper_link",
+                joint_prefix=f"follower_{name}",
+                package_root=package_root,
+                lock_wrist_joints=lock_wrist,
+                lock_z=lock_z,
+                locked_z=getattr(self.config, "locked_z", None),
+            )
+        return constraints
 
     def get_motor_names(self, arm: dict[str, MotorsBus]) -> list:
         return [f"{arm}_{motor}" for arm, bus in arm.items() for motor in bus.motors]
@@ -503,6 +532,14 @@ class ManipulatorRobot:
                 present_pos = self.follower_arms[name].read("Present_Position")
                 present_pos = torch.from_numpy(present_pos)
                 goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
+
+            # Apply optional teleoperation constraints (z-axis lock / wrist lock).
+            constraint = self._teleop_constraints.get(name)
+            if constraint is not None:
+                if not constraint.initialized:
+                    follower_present = self.follower_arms[name].read("Present_Position")
+                    constraint.initialize_refs(follower_present)
+                goal_pos = torch.from_numpy(constraint.apply(goal_pos.numpy()))
 
             # Used when record_data=True
             follower_goal_pos[name] = goal_pos

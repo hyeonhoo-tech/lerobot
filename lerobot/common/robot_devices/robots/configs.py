@@ -646,6 +646,20 @@ class TrossenAIStationaryRobotConfig(ManipulatorRobotConfig):
     # "opencv" is a fallback option that uses OpenCV to access the cameras.
     camera_interface: str = "intel_realsense"
 
+    # --- Teleoperation constraints (opt-in; default off => normal teleoperation) ---
+    # Freeze these arm joint indices (0..5) at the values held when teleoperation starts.
+    # Default wrist joints are forearm-roll (3), wrist-pitch (4), wrist-roll (5). The gripper
+    # (joint_6) is always left free. Set to None or [] to disable wrist locking.
+    lock_wrist_joints: list[int] | None = None
+    # Keep the end-effector at a fixed Cartesian height (requires pinocchio: `pip install pin`).
+    lock_z: bool = False
+    # Fixed height in meters. If None, the current EE height is captured when teleoperation starts.
+    locked_z: float | None = None
+    # Path to the URDF used for IK (z-axis lock). Defaults to the repo's stationary_ai.urdf.
+    constraint_urdf_path: str | None = None
+    # Path to trossen_arm_description for resolving package:// URIs in the URDF, if needed.
+    constraint_package_root: str | None = None
+
     leader_arms: dict[str, MotorsBusConfig] = field(init=False)  # Initialized later
 
     follower_arms: dict[str, MotorsBusConfig] = field(init=False)  # Initialized later
