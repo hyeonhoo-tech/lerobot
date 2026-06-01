@@ -197,6 +197,7 @@ class ManipulatorRobot:
                 lock_z=lock_z,
                 locked_z=getattr(self.config, "locked_z", None),
                 lock_orientation=lock_orientation,
+                locked_pitch_offset_deg=getattr(self.config, "locked_pitch_offset_deg", 0.0),
                 soft_start_s=getattr(self.config, "constraint_soft_start_s", 2.0),
             )
         return constraints

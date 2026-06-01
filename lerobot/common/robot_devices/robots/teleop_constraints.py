@@ -87,6 +87,7 @@ class StationaryTeleopConstraint:
         lock_z: bool = True,
         locked_z: float | None = None,
         lock_orientation: bool = False,
+        locked_pitch_offset_deg: float = 0.0,
         soft_start_s: float = 2.0,
         ik_iters: int = 80,
         ik_tol: float = 1e-3,
@@ -98,6 +99,7 @@ class StationaryTeleopConstraint:
         self.lock_z = lock_z
         self.locked_z = locked_z
         self.lock_orientation = lock_orientation
+        self.locked_pitch_offset_deg = locked_pitch_offset_deg
         self.soft_start_s = soft_start_s
         self.ik_iters = ik_iters
         self.ik_tol = ik_tol
@@ -250,11 +252,18 @@ class StationaryTeleopConstraint:
             target_R = np.array(oMcur.rotation, dtype=np.float64)
             if self.lock_orientation:
                 if self.locked_R is None:
-                    self.locked_R = np.array(oMcur.rotation, dtype=np.float64)
+                    captured_R = np.array(oMcur.rotation, dtype=np.float64)
+                    # Tilt the captured orientation by a fixed pitch (about the EE-local Y
+                    # axis). Positive value pitches one way; flip the sign if it tilts the
+                    # wrong way for your setup.
+                    theta = np.deg2rad(self.locked_pitch_offset_deg)
+                    R_off = pin.rpy.rpyToMatrix(0.0, theta, 0.0)
+                    self.locked_R = captured_R @ R_off
                     rpy = pin.rpy.matrixToRpy(self.locked_R)
                     print(
                         "[TeleopConstraint] orientation locked at "
-                        f"roll/pitch/yaw = {np.round(rpy, 4).tolist()} rad"
+                        f"roll/pitch/yaw = {np.round(rpy, 4).tolist()} rad "
+                        f"(pitch offset {self.locked_pitch_offset_deg:+.1f} deg)"
                     )
                 target_R = self.locked_R
 

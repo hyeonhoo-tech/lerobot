@@ -659,6 +659,9 @@ class TrossenAIStationaryRobotConfig(ManipulatorRobotConfig):
     # translates in the x-y plane. Uses all 6 arm joints in the IK, so it overrides (ignores)
     # lock_wrist_joints. Orientation reference is captured from the leader on the first step.
     lock_orientation: bool = False
+    # Extra pitch (degrees) applied to the locked orientation so the gripper looks a bit up/down
+    # relative to the captured pose. Positive tilts one way; flip the sign if it goes the wrong way.
+    locked_pitch_offset_deg: float = 0.0
     # Seconds to smoothly ease the follower from its starting pose to the constrained goal
     # when teleoperation starts (prevents a sudden jump/drop). Set 0 to disable.
     constraint_soft_start_s: float = 2.0
