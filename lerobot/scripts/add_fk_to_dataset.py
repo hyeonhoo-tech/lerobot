@@ -16,6 +16,7 @@ Example usage:
 
 import argparse
 import copy
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -28,7 +29,9 @@ try:
 except ImportError:
     raise ImportError("This script requires pinocchio. Install with: pip install pin")
 
+from lerobot.common.datasets.compute_stats import sample_indices
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.common.datasets.video_utils import decode_video_frames
 
 
 LEFT_EE_LINK = "follower_left_ee_gripper_link"
@@ -60,17 +63,24 @@ def _load_urdf(urdf_path: str | Path, package_root: str | Path | None = None) ->
     return model
 
 
-def _build_state_to_q_mapping(model: pin.Model, state_names: list[str]) -> list[tuple[int, int]]:
+def _build_state_to_q_mapping(model: pin.Model, state_names: list[str]) -> tuple[list[tuple[int, int]], dict[str, int]]:
     name_to_state_idx = {n: i for i, n in enumerate(state_names)}
     mapping = []
-    for side, prefix in [("left", "left"), ("right", "right")]:
+    for side in ["left", "right"]:
         for j in range(6):
             state_key = f"{side}_joint_{j}"
             urdf_name = f"follower_{side}_joint_{j}"
             if state_key in name_to_state_idx and model.existJointName(urdf_name):
                 joint_id = model.getJointId(urdf_name)
                 mapping.append((name_to_state_idx[state_key], model.joints[joint_id].idx_q))
-    return mapping
+
+    gripper_indices = {}
+    for side in ["left", "right"]:
+        key = f"{side}_joint_6"
+        if key in name_to_state_idx:
+            gripper_indices[side] = name_to_state_idx[key]
+
+    return mapping, gripper_indices
 
 
 def _compute_fk(
@@ -120,12 +130,7 @@ def add_fk_to_dataset(
     state_key = "observation.state"
     state_names = dataset.features[state_key]["names"]
 
-    state_to_q = _build_state_to_q_mapping(model, state_names)
-    if len(state_to_q) != 12:
-        raise ValueError(
-            f"Expected 12 arm joints (6 left + 6 right), got {len(state_to_q)}. "
-            "Check that state names contain left_joint_0..5 and right_joint_0..5."
-        )
+    state_to_q, gripper_indices = _build_state_to_q_mapping(model, state_names)
 
     frame_ids = {}
     for link_name in [LEFT_EE_LINK, RIGHT_EE_LINK, HEAD_CAMERA_LINK]:
@@ -137,18 +142,23 @@ def add_fk_to_dataset(
         "obs_left_ee_position":      {"dtype": "float32", "shape": (3,), "names": ["x", "y", "z"]},
         "obs_left_ee_quat_xyzw":     {"dtype": "float32", "shape": (4,), "names": ["qx", "qy", "qz", "qw"]},
         "obs_left_ee_euler_xyz":     {"dtype": "float32", "shape": (3,), "names": ["roll", "pitch", "yaw"]},
+        #"obs_left_gripper":          {"dtype": "float32", "shape": (1,), "names": ["gripper"]},
         "obs_right_ee_position":     {"dtype": "float32", "shape": (3,), "names": ["x", "y", "z"]},
         "obs_right_ee_quat_xyzw":    {"dtype": "float32", "shape": (4,), "names": ["qx", "qy", "qz", "qw"]},
         "obs_right_ee_euler_xyz":    {"dtype": "float32", "shape": (3,), "names": ["roll", "pitch", "yaw"]},
+        "obs_right_gripper":         {"dtype": "float32", "shape": (1,), "names": ["gripper"]},
         "obs_head_camera_position":  {"dtype": "float32", "shape": (3,), "names": ["x", "y", "z"]},
         "obs_head_camera_quat_xyzw": {"dtype": "float32", "shape": (4,), "names": ["qx", "qy", "qz", "qw"]},
+        "obs_head_camera_euler_xyz": {"dtype": "float32", "shape": (3,), "names": ["roll", "pitch", "yaw"]},
         # Action EEF (FK of goal joint positions)
         "action_left_ee_position":   {"dtype": "float32", "shape": (3,), "names": ["x", "y", "z"]},
         "action_left_ee_quat_xyzw":  {"dtype": "float32", "shape": (4,), "names": ["qx", "qy", "qz", "qw"]},
         "action_left_ee_euler_xyz":  {"dtype": "float32", "shape": (3,), "names": ["roll", "pitch", "yaw"]},
+        #"action_left_gripper":       {"dtype": "float32", "shape": (1,), "names": ["gripper"]},
         "action_right_ee_position":  {"dtype": "float32", "shape": (3,), "names": ["x", "y", "z"]},
         "action_right_ee_quat_xyzw": {"dtype": "float32", "shape": (4,), "names": ["qx", "qy", "qz", "qw"]},
         "action_right_ee_euler_xyz": {"dtype": "float32", "shape": (3,), "names": ["roll", "pitch", "yaw"]},
+        "action_right_gripper":      {"dtype": "float32", "shape": (1,), "names": ["gripper"]},
     }
     features_with_fk = copy.deepcopy(dataset.meta.info["features"])
     for k, v in fk_features.items():
@@ -169,30 +179,76 @@ def add_fk_to_dataset(
     for ep_idx in tqdm(range(dataset.num_episodes), desc="Episodes"):
         from_idx = int(ep_from[ep_idx].item())
         to_idx = int(ep_to[ep_idx].item())
+        num_frames = to_idx - from_idx
 
-        for global_idx in tqdm(range(from_idx, to_idx), desc="Frames", leave=False):
-            item = dataset[global_idx]
+        # Read all tabular data for this episode at once (no video decoding)
+        ep_rows = dataset.hf_dataset.select(range(from_idx, to_idx))
+        states     = np.array(ep_rows["observation.state"], dtype=np.float64)  # (N, 14)
+        actions    = np.array(ep_rows["action"],            dtype=np.float64)  # (N, 14)
+        timestamps = np.array(ep_rows["timestamp"],         dtype=np.float32)  # (N,)
+        task_indices = ep_rows["task_index"]
 
-            state = item[state_key].numpy().astype(np.float64)
-            obs_fk = _compute_fk(model, data, state, state_to_q, frame_ids)
+        # Build episode_buffer manually — avoids add_frame touching video at all
+        episode_buffer = new_dataset.create_episode_buffer()
 
-            action = item["action"].numpy().astype(np.float64)
-            action_fk = _compute_fk(model, data, action, state_to_q, frame_ids)
+        for i in tqdm(range(num_frames), desc="Frames", leave=False):
+            obs_fk    = _compute_fk(model, data, states[i],  state_to_q, frame_ids)
+            action_fk = _compute_fk(model, data, actions[i], state_to_q, frame_ids)
 
-            frame = {
-                "action": item["action"],
-                "observation.state": item["observation.state"],
-                "task": item["task"],
-                "timestamp": np.float32(item["timestamp"].item()),
-                **{f"obs_{k}": v for k, v in obs_fk.items()},
-                **{f"action_{k}": v for k, v in action_fk.items() if "head_camera" not in k},
-            }
-            for cam_key in dataset.meta.camera_keys:
-                frame[cam_key] = item[cam_key].permute(1, 2, 0)
+            task_str = dataset.meta.tasks[int(task_indices[i])]
 
-            new_dataset.add_frame(frame)
+            episode_buffer["frame_index"].append(i)
+            episode_buffer["timestamp"].append(float(timestamps[i]))
+            episode_buffer["task"].append(task_str)
+            episode_buffer["action"].append(actions[i].astype(np.float32))
+            episode_buffer["observation.state"].append(states[i].astype(np.float32))
 
-        new_dataset.save_episode()
+            for k, v in obs_fk.items():
+                key = f"obs_{k}"
+                if key in episode_buffer:
+                    episode_buffer[key].append(v)
+            for k, v in action_fk.items():
+                key = f"action_{k}"
+                if key in episode_buffer:
+                    episode_buffer[key].append(v)
+
+            # Gripper values (joint_6) stored separately from FK
+            for side, state_idx in gripper_indices.items():
+                if f"obs_{side}_gripper" in episode_buffer:
+                    episode_buffer[f"obs_{side}_gripper"].append(
+                        np.array([states[i][state_idx]], dtype=np.float32)
+                    )
+                if f"action_{side}_gripper" in episode_buffer:
+                    episode_buffer[f"action_{side}_gripper"].append(
+                        np.array([actions[i][state_idx]], dtype=np.float32)
+                    )
+
+            episode_buffer["size"] += 1
+
+        # Handle videos: copy file directly + decode a small sample for stats computation.
+        # encode_episode_videos skips encoding when the destination file already exists.
+        for vid_key in dataset.meta.video_keys:
+            src = dataset.root / dataset.meta.get_video_file_path(ep_idx, vid_key)
+            dst = new_dataset.root / new_dataset.meta.get_video_file_path(ep_idx, vid_key)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+
+            # Decode a sample of frames so compute_episode_stats has real image paths.
+            # Use integer frame indices → exact i/fps timestamps to avoid tolerance errors.
+            idxs = sample_indices(num_frames)
+            sample_ts = [idx / dataset.meta.fps for idx in idxs]
+            frames = decode_video_frames(src, sample_ts, dataset.tolerance_s)  # (n, C, H, W)
+
+            img_paths = []
+            for frame_i, frame in enumerate(frames):
+                img_path = new_dataset._get_image_file_path(ep_idx, vid_key, frame_i)
+                img_path.parent.mkdir(parents=True, exist_ok=True)
+                new_dataset._save_image(frame, img_path)
+                img_paths.append(str(img_path))
+
+            episode_buffer[vid_key] = img_paths
+
+        new_dataset.save_episode(episode_data=episode_buffer)
 
     if push_to_hub:
         print("Pushing to Hub...")

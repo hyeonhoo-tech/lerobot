@@ -375,8 +375,9 @@ def record(
 
         eef_repo_id = cfg.repo_id + "_eef"
         eef_root = str(cfg.root) + "_eef" if cfg.root else None
+        loaded_dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
         add_fk_to_dataset(
-            dataset=dataset,
+            dataset=loaded_dataset,
             urdf_path=cfg.urdf_path,
             output_repo_id=eef_repo_id,
             output_root=eef_root,

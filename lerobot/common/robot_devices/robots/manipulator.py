@@ -188,6 +188,8 @@ class ManipulatorRobot:
     def motor_features(self) -> dict:
         action_names = self.get_motor_names(self.leader_arms)
         state_names = self.get_motor_names(self.leader_arms)
+        if not action_names and not state_names:
+            return {}
         return {
             "action": {
                 "dtype": "float32",
@@ -531,14 +533,14 @@ class ManipulatorRobot:
         for name in self.follower_arms:
             if name in follower_pos:
                 state.append(follower_pos[name])
-        state = torch.cat(state)
+        state = torch.cat(state) if state else torch.zeros(0)
 
         # Create action by concatenating follower goal position
         action = []
         for name in self.follower_arms:
             if name in follower_goal_pos:
                 action.append(follower_goal_pos[name])
-        action = torch.cat(action)
+        action = torch.cat(action) if action else torch.zeros(0)
 
         # Capture images from cameras
         images = {}
@@ -551,9 +553,10 @@ class ManipulatorRobot:
 
         # Populate output dictionaries
         obs_dict, action_dict = {}, {}
-        if record_joint_angles:
+        if record_joint_angles and state.numel() > 0:
             obs_dict["observation.state"] = state
-        action_dict["action"] = action
+        if action.numel()>0:
+            action_dict["action"] = action
         for name in self.cameras:
             obs_dict[f"observation.images.{name}"] = images[name]
 
