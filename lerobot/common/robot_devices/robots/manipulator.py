@@ -175,7 +175,8 @@ class ManipulatorRobot:
         """Build per-arm teleoperation constraints if enabled in the config (opt-in)."""
         lock_wrist = getattr(self.config, "lock_wrist_joints", None)
         lock_z = getattr(self.config, "lock_z", False)
-        if not lock_wrist and not lock_z:
+        lock_orientation = getattr(self.config, "lock_orientation", False)
+        if not lock_wrist and not lock_z and not lock_orientation:
             return {}
 
         from lerobot.common.robot_devices.robots.teleop_constraints import StationaryTeleopConstraint
@@ -195,6 +196,7 @@ class ManipulatorRobot:
                 lock_wrist_joints=lock_wrist,
                 lock_z=lock_z,
                 locked_z=getattr(self.config, "locked_z", None),
+                lock_orientation=lock_orientation,
             )
         return constraints
 

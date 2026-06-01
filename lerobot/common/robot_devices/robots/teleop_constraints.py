@@ -2,26 +2,34 @@
 """
 Teleoperation constraints for the Trossen AI stationary setup.
 
-Lets you record data while keeping the end-effector at a fixed Cartesian height
-(z-axis lock) and/or freezing wrist joints, all enforced *during* teleoperation so
-the recorded `action`/`observation.state` faithfully reflect the constrained motion.
+Lets you record data while constraining the follower's end-effector, enforced *during*
+teleoperation so the recorded `action`/`observation.state` faithfully reflect the
+constrained motion.
 
-Two independent constraints, both opt-in:
+Three independent, opt-in constraints:
 
-1. Wrist lock (joint space, no IK):
-   The listed joint indices (default joint_3, joint_4, joint_5) are overwritten with
-   reference values captured when teleoperation starts. The gripper (joint_6) is left free.
+1. z-axis lock (`lock_z`):
+   Keep the end-effector at a fixed Cartesian height. The leader's intended (x, y) is
+   followed; z is replaced by `locked_z`.
 
-2. z-axis lock (Cartesian, requires pinocchio IK):
-   Each step, forward kinematics gives the leader's intended end-effector (x, y); z is
-   replaced by a fixed `locked_z`. A damped least-squares position IK over the remaining
-   free position joints (those among joint_0..joint_5 that are not wrist-locked, i.e.
-   joint_0, joint_1, joint_2 by default) drives the follower to (x, y, locked_z).
+2. Orientation lock (`lock_orientation`):
+   Keep the end-effector orientation fixed (the gripper keeps pointing the same way) while
+   it translates in the x-y plane. This uses all 6 arm joints in the IK (wrist included),
+   so it CANNOT be combined with joint-space wrist locking — when enabled, `lock_wrist_joints`
+   is ignored. The orientation reference is captured from the leader's pose on the first
+   teleop step, so hold the leader's gripper in the desired orientation when you start.
+
+3. Wrist lock (`lock_wrist_joints`, joint space):
+   Freeze the listed joint indices (e.g. joint_3, joint_4, joint_5) at the values held when
+   teleoperation starts. The gripper (joint_6) is always left free. Ignored if
+   `lock_orientation` is on.
+
+IK solver:
+- Orientation lock on  -> full 6-DOF pose IK (position + orientation) over all 6 arm joints.
+- Orientation lock off -> position-only IK over the free (non-wrist-locked) arm joints.
 
 Install dependency (recording machine only): pip install pin
-
-This module is only imported when constraints are enabled, so pinocchio is not required
-for normal (unconstrained) recording.
+This module is only imported when constraints are enabled.
 """
 
 from __future__ import annotations
@@ -58,12 +66,12 @@ def _load_urdf_model(urdf_path: str | Path, package_root: str | Path | None):
 
 
 class StationaryTeleopConstraint:
-    """Per-arm teleoperation constraint (wrist lock + z-axis lock).
+    """Per-arm teleoperation constraint (z-axis lock / orientation lock / wrist lock).
 
     Usage:
         c = StationaryTeleopConstraint(urdf_path=..., ee_link="follower_right_ee_gripper_link",
                                        joint_prefix="follower_right",
-                                       lock_wrist_joints=[3, 4, 5], lock_z=True)
+                                       lock_z=True, locked_z=0.10, lock_orientation=True)
         c.initialize_refs(follower_present_pos)   # call once, with current follower joints
         goal = c.apply(leader_goal_pos)            # call every teleop step
     """
@@ -77,20 +85,26 @@ class StationaryTeleopConstraint:
         lock_wrist_joints: list[int] | None = (3, 4, 5),
         lock_z: bool = True,
         locked_z: float | None = None,
-        ik_iters: int = 30,
-        ik_tol: float = 5e-4,
-        ik_damping: float = 1e-3,
+        lock_orientation: bool = False,
+        ik_iters: int = 80,
+        ik_tol: float = 1e-3,
+        ik_damping: float = 1e-2,
     ):
         import pinocchio as pin
 
         self._pin = pin
-        self.lock_wrist_joints = sorted(set(lock_wrist_joints)) if lock_wrist_joints else []
         self.lock_z = lock_z
         self.locked_z = locked_z
+        self.lock_orientation = lock_orientation
         self.ik_iters = ik_iters
         self.ik_tol = ik_tol
         self.ik_damping = ik_damping
 
+        # Orientation lock needs the wrist free for IK; it overrides joint-space wrist locking.
+        if lock_orientation:
+            self.lock_wrist_joints: list[int] = []
+        else:
+            self.lock_wrist_joints = sorted(set(lock_wrist_joints)) if lock_wrist_joints else []
         for j in self.lock_wrist_joints:
             if not 0 <= j < NUM_ARM_JOINTS:
                 raise ValueError(f"lock_wrist_joints index {j} out of range [0, {NUM_ARM_JOINTS}).")
@@ -113,10 +127,15 @@ class StationaryTeleopConstraint:
             self.joint_q_idx[j] = self.model.joints[jid].idx_q
             self.joint_v_idx[j] = self.model.joints[jid].idx_v
 
-        # Free position joints for IK = arm joints that are NOT wrist-locked.
-        self.free_pos_joints = [j for j in range(NUM_ARM_JOINTS) if j not in self.lock_wrist_joints]
+        # Joints the IK is allowed to move. Orientation lock uses all 6; otherwise only the
+        # arm joints that are not wrist-locked (e.g. joint_0, joint_1, joint_2).
+        if self.lock_orientation:
+            self.free_arm_joints = list(range(NUM_ARM_JOINTS))
+        else:
+            self.free_arm_joints = [j for j in range(NUM_ARM_JOINTS) if j not in self.lock_wrist_joints]
 
         self.wrist_refs: dict[int, float] = {}
+        self.locked_R: np.ndarray | None = None  # orientation reference (set on first apply)
         self._initialized = False
 
     @property
@@ -124,20 +143,17 @@ class StationaryTeleopConstraint:
         return self._initialized
 
     def initialize_refs(self, follower_present_pos: np.ndarray) -> None:
-        """Capture reference values from the follower's current joints.
-
-        - Wrist reference values are taken from the current follower joints (unless
-          a locked value was explicitly provided via the config in the future).
-        - If `locked_z` was not set, capture the current end-effector height as z0.
-        """
+        """Capture reference values from the follower's current joints."""
         follower_present_pos = np.asarray(follower_present_pos, dtype=np.float64)
         for j in self.lock_wrist_joints:
             self.wrist_refs[j] = float(follower_present_pos[j])
 
         if self.lock_z and self.locked_z is None:
             q = self._build_q(follower_present_pos)
-            self.locked_z = float(self._fk_position(q)[2])
+            self.locked_z = float(self._fk_pose(q).translation[2])
 
+        if self.lock_z:
+            print(f"[TeleopConstraint] z-axis locked at z = {self.locked_z:.4f} m")
         self._initialized = True
 
     def _build_q(self, arm_joints: np.ndarray) -> np.ndarray:
@@ -147,34 +163,57 @@ class StationaryTeleopConstraint:
             q[self.joint_q_idx[j]] = float(arm_joints[j])
         return q
 
-    def _fk_position(self, q: np.ndarray) -> np.ndarray:
+    def _fk_pose(self, q: np.ndarray):
+        """Return the EE placement (SE3) for configuration q."""
         pin = self._pin
         pin.forwardKinematics(self.model, self.data, q)
         pin.updateFramePlacements(self.model, self.data)
-        return np.array(self.data.oMf[self.ee_frame_id].translation, dtype=np.float64)
+        return pin.SE3(self.data.oMf[self.ee_frame_id])
 
-    def _solve_position_ik(self, q: np.ndarray, target_pos: np.ndarray) -> np.ndarray:
-        """Damped least-squares IK on free position joints to reach target_pos (x, y, z)."""
+    def _solve_ik(self, q: np.ndarray, oMdes, free_v: list[int]) -> np.ndarray:
+        """Damped least-squares IK to reach the desired EE placement oMdes.
+
+        If `lock_orientation` is set, matches the full 6-DOF pose; otherwise position only.
+        Only the velocity components in `free_v` are allowed to change.
+        """
         pin = self._pin
-        free_v = [self.joint_v_idx[j] for j in self.free_pos_joints]
-        I = np.eye(3)
-        for _ in range(self.ik_iters):
-            pin.forwardKinematics(self.model, self.data, q)
-            pin.updateFramePlacements(self.model, self.data)
-            current = np.array(self.data.oMf[self.ee_frame_id].translation, dtype=np.float64)
-            err = target_pos - current
-            if np.linalg.norm(err) < self.ik_tol:
-                break
-            J = pin.computeFrameJacobian(
-                self.model, self.data, q, self.ee_frame_id, pin.ReferenceFrame.LOCAL_WORLD_ALIGNED
-            )
-            J_pos = J[:3, free_v]  # (3, n_free)
-            # dq_free = J^T (J J^T + lambda I)^-1 err
-            dq_free = J_pos.T @ np.linalg.solve(J_pos @ J_pos.T + self.ik_damping * I, err)
-            dq = np.zeros(self.model.nv)
-            for k, vidx in enumerate(free_v):
-                dq[vidx] = dq_free[k]
-            q = pin.integrate(self.model, q, dq)
+        if self.lock_orientation:
+            I6 = np.eye(6)
+            for _ in range(self.ik_iters):
+                pin.forwardKinematics(self.model, self.data, q)
+                pin.updateFramePlacements(self.model, self.data)
+                oMcur = self.data.oMf[self.ee_frame_id]
+                iMd = oMcur.actInv(oMdes)  # desired pose expressed in current EE frame
+                err = pin.log(iMd).vector  # 6-vector (LOCAL frame)
+                if np.linalg.norm(err) < self.ik_tol:
+                    break
+                J = pin.computeFrameJacobian(self.model, self.data, q, self.ee_frame_id)  # LOCAL
+                J = -pin.Jlog6(iMd.inverse()).dot(J)  # 6 x nv
+                Jf = J[:, free_v]
+                v_free = -Jf.T.dot(np.linalg.solve(Jf.dot(Jf.T) + self.ik_damping * I6, err))
+                v = np.zeros(self.model.nv)
+                for k, vidx in enumerate(free_v):
+                    v[vidx] = v_free[k]
+                q = pin.integrate(self.model, q, v)
+        else:
+            I3 = np.eye(3)
+            target_pos = oMdes.translation
+            for _ in range(self.ik_iters):
+                pin.forwardKinematics(self.model, self.data, q)
+                pin.updateFramePlacements(self.model, self.data)
+                current = np.array(self.data.oMf[self.ee_frame_id].translation, dtype=np.float64)
+                err = target_pos - current
+                if np.linalg.norm(err) < self.ik_tol:
+                    break
+                J = pin.computeFrameJacobian(
+                    self.model, self.data, q, self.ee_frame_id, pin.ReferenceFrame.LOCAL_WORLD_ALIGNED
+                )
+                J_pos = J[:3, free_v]
+                v_free = J_pos.T.dot(np.linalg.solve(J_pos.dot(J_pos.T) + self.ik_damping * I3, err))
+                v = np.zeros(self.model.nv)
+                for k, vidx in enumerate(free_v):
+                    v[vidx] = v_free[k]
+                q = pin.integrate(self.model, q, v)
         return q
 
     def apply(self, leader_goal_pos: np.ndarray) -> np.ndarray:
@@ -182,19 +221,37 @@ class StationaryTeleopConstraint:
         if not self._initialized:
             raise RuntimeError("Call initialize_refs() before apply().")
 
+        pin = self._pin
         goal = np.asarray(leader_goal_pos, dtype=np.float64).copy()
 
-        # 1) Wrist lock (joint space).
+        # 1) Joint-space wrist lock (skipped when orientation lock is on).
         for j, ref in self.wrist_refs.items():
             goal[j] = ref
 
-        # 2) z-axis lock (Cartesian, via IK over free position joints).
-        if self.lock_z:
+        # 2) Cartesian constraints via IK.
+        if self.lock_z or self.lock_orientation:
             q = self._build_q(goal[:NUM_ARM_JOINTS])
-            target = self._fk_position(q)  # leader's (x, y, z) with wrist already overridden
-            target[2] = self.locked_z
-            q = self._solve_position_ik(q, target)
-            for j in self.free_pos_joints:
+            oMcur = self._fk_pose(q)  # leader's intended pose (wrist already overridden)
+
+            target_pos = np.array(oMcur.translation, dtype=np.float64)
+            if self.lock_z:
+                target_pos[2] = self.locked_z
+
+            target_R = np.array(oMcur.rotation, dtype=np.float64)
+            if self.lock_orientation:
+                if self.locked_R is None:
+                    self.locked_R = np.array(oMcur.rotation, dtype=np.float64)
+                    rpy = pin.rpy.matrixToRpy(self.locked_R)
+                    print(
+                        "[TeleopConstraint] orientation locked at "
+                        f"roll/pitch/yaw = {np.round(rpy, 4).tolist()} rad"
+                    )
+                target_R = self.locked_R
+
+            oMdes = pin.SE3(target_R, target_pos)
+            free_v = [self.joint_v_idx[j] for j in self.free_arm_joints]
+            q = self._solve_ik(q, oMdes, free_v)
+            for j in self.free_arm_joints:
                 goal[j] = q[self.joint_q_idx[j]]
 
         return goal.astype(np.float32)

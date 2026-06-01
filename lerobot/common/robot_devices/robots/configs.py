@@ -655,6 +655,10 @@ class TrossenAIStationaryRobotConfig(ManipulatorRobotConfig):
     lock_z: bool = False
     # Fixed height in meters. If None, the current EE height is captured when teleoperation starts.
     locked_z: float | None = None
+    # Keep the end-effector orientation fixed (gripper keeps pointing the same way) while it
+    # translates in the x-y plane. Uses all 6 arm joints in the IK, so it overrides (ignores)
+    # lock_wrist_joints. Orientation reference is captured from the leader on the first step.
+    lock_orientation: bool = False
     # Path to the URDF used for IK (z-axis lock). Defaults to the repo's stationary_ai.urdf.
     constraint_urdf_path: str | None = None
     # Path to trossen_arm_description for resolving package:// URIs in the URDF, if needed.
