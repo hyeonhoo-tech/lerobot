@@ -35,6 +35,7 @@ This module is only imported when constraints are enabled.
 from __future__ import annotations
 
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -86,6 +87,7 @@ class StationaryTeleopConstraint:
         lock_z: bool = True,
         locked_z: float | None = None,
         lock_orientation: bool = False,
+        soft_start_s: float = 2.0,
         ik_iters: int = 80,
         ik_tol: float = 1e-3,
         ik_damping: float = 1e-2,
@@ -96,6 +98,7 @@ class StationaryTeleopConstraint:
         self.lock_z = lock_z
         self.locked_z = locked_z
         self.lock_orientation = lock_orientation
+        self.soft_start_s = soft_start_s
         self.ik_iters = ik_iters
         self.ik_tol = ik_tol
         self.ik_damping = ik_damping
@@ -136,6 +139,8 @@ class StationaryTeleopConstraint:
 
         self.wrist_refs: dict[int, float] = {}
         self.locked_R: np.ndarray | None = None  # orientation reference (set on first apply)
+        self._q_start_arm: np.ndarray | None = None  # follower arm joints when teleop starts
+        self._t0: float | None = None  # soft-start clock (set on first apply)
         self._initialized = False
 
     @property
@@ -145,6 +150,7 @@ class StationaryTeleopConstraint:
     def initialize_refs(self, follower_present_pos: np.ndarray) -> None:
         """Capture reference values from the follower's current joints."""
         follower_present_pos = np.asarray(follower_present_pos, dtype=np.float64)
+        self._q_start_arm = follower_present_pos[:NUM_ARM_JOINTS].copy()
         for j in self.lock_wrist_joints:
             self.wrist_refs[j] = float(follower_present_pos[j])
 
@@ -153,7 +159,11 @@ class StationaryTeleopConstraint:
             self.locked_z = float(self._fk_pose(q).translation[2])
 
         if self.lock_z:
-            print(f"[TeleopConstraint] z-axis locked at z = {self.locked_z:.4f} m")
+            z_now = float(self._fk_pose(self._build_q(follower_present_pos)).translation[2])
+            print(
+                f"[TeleopConstraint] start z = {z_now:.4f} m -> locked z = {self.locked_z:.4f} m"
+                f" (soft-start over {self.soft_start_s:.1f}s)"
+            )
         self._initialized = True
 
     def _build_q(self, arm_joints: np.ndarray) -> np.ndarray:
@@ -253,5 +263,18 @@ class StationaryTeleopConstraint:
             q = self._solve_ik(q, oMdes, free_v)
             for j in self.free_arm_joints:
                 goal[j] = q[self.joint_q_idx[j]]
+
+        # 3) Soft start: ease the arm joints from the starting pose to the constrained goal
+        # over `soft_start_s` so the follower does not jump (e.g. drop to a low locked_z) on
+        # the very first step. The gripper (joint_6) is left untouched.
+        if self.soft_start_s > 0 and self._q_start_arm is not None:
+            if self._t0 is None:
+                self._t0 = time.perf_counter()
+            alpha = (time.perf_counter() - self._t0) / self.soft_start_s
+            if alpha < 1.0:
+                alpha = max(alpha, 0.0)
+                goal[:NUM_ARM_JOINTS] = (
+                    (1.0 - alpha) * self._q_start_arm + alpha * goal[:NUM_ARM_JOINTS]
+                )
 
         return goal.astype(np.float32)

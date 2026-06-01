@@ -659,6 +659,9 @@ class TrossenAIStationaryRobotConfig(ManipulatorRobotConfig):
     # translates in the x-y plane. Uses all 6 arm joints in the IK, so it overrides (ignores)
     # lock_wrist_joints. Orientation reference is captured from the leader on the first step.
     lock_orientation: bool = False
+    # Seconds to smoothly ease the follower from its starting pose to the constrained goal
+    # when teleoperation starts (prevents a sudden jump/drop). Set 0 to disable.
+    constraint_soft_start_s: float = 2.0
     # Path to the URDF used for IK (z-axis lock). Defaults to the repo's stationary_ai.urdf.
     constraint_urdf_path: str | None = None
     # Path to trossen_arm_description for resolving package:// URIs in the URDF, if needed.

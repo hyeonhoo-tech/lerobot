@@ -197,6 +197,7 @@ class ManipulatorRobot:
                 lock_z=lock_z,
                 locked_z=getattr(self.config, "locked_z", None),
                 lock_orientation=lock_orientation,
+                soft_start_s=getattr(self.config, "constraint_soft_start_s", 2.0),
             )
         return constraints
 
@@ -528,20 +529,22 @@ class ManipulatorRobot:
             before_fwrite_t = time.perf_counter()
             goal_pos = leader_pos[name]
 
-            # Cap goal position when too far away from present position.
-            # Slower fps expected due to reading from the follower.
-            if self.config.max_relative_target is not None:
-                present_pos = self.follower_arms[name].read("Present_Position")
-                present_pos = torch.from_numpy(present_pos)
-                goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
-
-            # Apply optional teleoperation constraints (z-axis lock / wrist lock).
+            # Apply optional teleoperation constraints (z-axis / orientation / wrist lock)
+            # BEFORE the safety cap, so the cap also limits the IK output (the constrained
+            # goal can be far from the current pose, e.g. when starting at a low locked_z).
             constraint = self._teleop_constraints.get(name)
             if constraint is not None:
                 if not constraint.initialized:
                     follower_present = self.follower_arms[name].read("Present_Position")
                     constraint.initialize_refs(follower_present)
                 goal_pos = torch.from_numpy(constraint.apply(goal_pos.numpy()))
+
+            # Cap goal position when too far away from present position.
+            # Slower fps expected due to reading from the follower.
+            if self.config.max_relative_target is not None:
+                present_pos = self.follower_arms[name].read("Present_Position")
+                present_pos = torch.from_numpy(present_pos)
+                goal_pos = ensure_safe_goal_position(goal_pos, present_pos, self.config.max_relative_target)
 
             # Used when record_data=True
             follower_goal_pos[name] = goal_pos
