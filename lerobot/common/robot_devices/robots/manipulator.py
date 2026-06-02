@@ -546,10 +546,12 @@ class ManipulatorRobot:
             # Apply optional teleoperation constraints (z-axis / orientation / wrist lock).
             constraint = self._teleop_constraints.get(name)
             if constraint is not None:
+                # Pass the follower's actual joints so the constraint can re-anchor its
+                # soft-start after a pause (e.g. teleop_safety_stop reset to home pose).
+                follower_present = self.follower_arms[name].read("Present_Position")
                 if not constraint.initialized:
-                    follower_present = self.follower_arms[name].read("Present_Position")
                     constraint.initialize_refs(follower_present)
-                goal_pos = torch.from_numpy(constraint.apply(goal_pos.numpy()))
+                goal_pos = torch.from_numpy(constraint.apply(goal_pos.numpy(), follower_present))
 
             # Used when record_data=True
             follower_goal_pos[name] = goal_pos

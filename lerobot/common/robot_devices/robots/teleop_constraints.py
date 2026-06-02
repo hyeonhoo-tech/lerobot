@@ -243,13 +243,36 @@ class StationaryTeleopConstraint:
                 q = pin.integrate(self.model, q, v)
         return q
 
-    def apply(self, leader_goal_pos: np.ndarray) -> np.ndarray:
-        """Return a constrained goal position (7,) given the leader's goal joints (7,)."""
+    def apply(self, leader_goal_pos: np.ndarray, follower_present_pos: np.ndarray | None = None) -> np.ndarray:
+        """Return a constrained goal position (7,) given the leader's goal joints (7,).
+
+        `follower_present_pos` (the follower's actual joints right now) is used to re-anchor
+        the soft-start whenever the teleop loop has been paused — e.g. after `teleop_safety_stop`
+        resets the arm to its home pose between warmup and recording. Without it, the ramp would
+        ease from a stale pose and the follower would jerk.
+        """
         if not self._initialized:
             raise RuntimeError("Call initialize_refs() before apply().")
 
         pin = self._pin
         goal = np.asarray(leader_goal_pos, dtype=np.float64).copy()
+
+        # 0) Detect a loop pause (gap between apply calls) and re-arm the soft-start from the
+        # follower's ACTUAL current pose, since it may have been moved (e.g. reset to home by
+        # teleop_safety_stop) while the loop was not running.
+        now = time.perf_counter()
+        paused = self._last_apply_t is not None and (now - self._last_apply_t) > self._gap_s
+        if self._t0 is None or paused:
+            self._t0 = now
+            if follower_present_pos is not None:
+                present_arm = np.asarray(follower_present_pos, dtype=np.float64)[:NUM_ARM_JOINTS]
+                self._ramp_anchor = present_arm.copy()
+                self._prev_xy = self._fk_pose(self._build_q(present_arm)).translation[:2].copy()
+                self._last_good_arm = None  # don't compare jumps against a stale pre-pause pose
+            else:
+                anchor = self._last_returned_arm if self._last_returned_arm is not None else self._q_start_arm
+                self._ramp_anchor = None if anchor is None else anchor.copy()
+        self._last_apply_t = now
 
         # 1) Joint-space wrist lock (skipped when orientation lock is on).
         for j, ref in self.wrist_refs.items():
@@ -326,27 +349,16 @@ class StationaryTeleopConstraint:
                 self._last_good_arm = candidate_arm.copy()
                 self._warned_infeasible = False
 
-        # 3) Soft start: ease the arm joints from the current pose to the constrained goal so
-        # the follower does not jump. The ramp advances in wall time but is RE-ARMED whenever
-        # the teleop loop has been paused (gap between calls), e.g. at the warmup -> recording
-        # transition, starting a fresh ease from wherever the arm currently is. The gripper
+        # 3) Soft start: ease the arm joints from the (re-armed) anchor pose to the constrained
+        # goal over `soft_start_s`. Re-arming is handled at the top of apply(). The gripper
         # (joint_6) is left untouched.
-        if self.soft_start_s > 0:
-            now = time.perf_counter()
-            paused = self._last_apply_t is not None and (now - self._last_apply_t) > self._gap_s
-            if self._t0 is None or paused:
-                self._t0 = now
-                anchor = self._last_returned_arm if self._last_returned_arm is not None else self._q_start_arm
-                self._ramp_anchor = None if anchor is None else anchor.copy()
-            self._last_apply_t = now
-
-            if self._ramp_anchor is not None:
-                alpha = (now - self._t0) / self.soft_start_s
-                if alpha < 1.0:
-                    alpha = max(alpha, 0.0)
-                    goal[:NUM_ARM_JOINTS] = (
-                        (1.0 - alpha) * self._ramp_anchor + alpha * goal[:NUM_ARM_JOINTS]
-                    )
+        if self.soft_start_s > 0 and self._ramp_anchor is not None:
+            alpha = (now - self._t0) / self.soft_start_s
+            if alpha < 1.0:
+                alpha = max(alpha, 0.0)
+                goal[:NUM_ARM_JOINTS] = (
+                    (1.0 - alpha) * self._ramp_anchor + alpha * goal[:NUM_ARM_JOINTS]
+                )
 
         self._last_returned_arm = goal[:NUM_ARM_JOINTS].copy()
         return goal.astype(np.float32)
