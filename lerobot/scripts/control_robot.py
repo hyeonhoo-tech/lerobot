@@ -247,6 +247,7 @@ def record(
         dataset = LeRobotDataset(
             cfg.repo_id,
             root=cfg.root,
+            tolerance_s=cfg.tolerance_s,
         )
         if len(robot.cameras) > 0:
             dataset.start_image_writer(
@@ -263,6 +264,7 @@ def record(
             root=cfg.root,
             robot=robot,
             use_videos=cfg.video,
+            tolerance_s=cfg.tolerance_s,
             image_writer_processes=cfg.num_image_writer_processes,
             image_writer_threads=cfg.num_image_writer_threads_per_camera * len(robot.cameras),
         )
@@ -375,7 +377,7 @@ def record(
 
         eef_repo_id = cfg.repo_id + "_eef"
         eef_root = str(cfg.root) + "_eef" if cfg.root else None
-        loaded_dataset = LeRobotDataset(cfg.repo_id, root=cfg.root)
+        loaded_dataset = LeRobotDataset(cfg.repo_id, root=cfg.root, tolerance_s=cfg.tolerance_s)
         add_fk_to_dataset(
             dataset=loaded_dataset,
             urdf_path=cfg.urdf_path,

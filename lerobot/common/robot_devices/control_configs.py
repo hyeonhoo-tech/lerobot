@@ -92,6 +92,9 @@ class RecordControlConfig(ControlConfig):
     # Path to stationary_ai.urdf. If provided, FK is computed after recording and EEF poses are
     # saved as a new dataset at {repo_id}_eef.
     urdf_path: str | None = None
+    # Timestamp sync tolerance in seconds. Raise this (e.g. 0.01) if recording fps jitter causes
+    # timestamp sync errors when the dataset is (re)loaded, e.g. for the post-recording FK step.
+    tolerance_s: float = 1e-4
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
