@@ -146,10 +146,16 @@ class StationaryTeleopConstraint:
         self.wrist_refs: dict[int, float] = {}
         self.locked_R: np.ndarray | None = None  # orientation reference (set on first apply)
         self._q_start_arm: np.ndarray | None = None  # follower arm joints when teleop starts
-        self._t0: float | None = None  # soft-start clock (set on first apply)
+        self._t0: float | None = None  # soft-start ramp clock
+        self._ramp_anchor: np.ndarray | None = None  # arm pose the current ramp starts from
+        self._last_apply_t: float | None = None  # wall time of the previous apply() call
+        self._last_returned_arm: np.ndarray | None = None  # last arm goal we returned
         self._prev_xy: np.ndarray | None = None  # last commanded EE (x, y) for rate limiting
         self._last_good_arm: np.ndarray | None = None  # last feasible arm goal (z held)
         self._warned_infeasible = False
+        # If apply() has not been called for longer than this (loop paused, e.g. between
+        # warmup and recording), re-arm the soft-start from the current pose to avoid a jump.
+        self._gap_s = 0.3
         self._initialized = False
 
     @property
@@ -310,17 +316,27 @@ class StationaryTeleopConstraint:
                 self._last_good_arm = goal[:NUM_ARM_JOINTS].copy()
                 self._warned_infeasible = False
 
-        # 3) Soft start: ease the arm joints from the starting pose to the constrained goal
-        # over `soft_start_s` so the follower does not jump (e.g. drop to a low locked_z) on
-        # the very first step. The gripper (joint_6) is left untouched.
-        if self.soft_start_s > 0 and self._q_start_arm is not None:
-            if self._t0 is None:
-                self._t0 = time.perf_counter()
-            alpha = (time.perf_counter() - self._t0) / self.soft_start_s
-            if alpha < 1.0:
-                alpha = max(alpha, 0.0)
-                goal[:NUM_ARM_JOINTS] = (
-                    (1.0 - alpha) * self._q_start_arm + alpha * goal[:NUM_ARM_JOINTS]
-                )
+        # 3) Soft start: ease the arm joints from the current pose to the constrained goal so
+        # the follower does not jump. The ramp advances in wall time but is RE-ARMED whenever
+        # the teleop loop has been paused (gap between calls), e.g. at the warmup -> recording
+        # transition, starting a fresh ease from wherever the arm currently is. The gripper
+        # (joint_6) is left untouched.
+        if self.soft_start_s > 0:
+            now = time.perf_counter()
+            paused = self._last_apply_t is not None and (now - self._last_apply_t) > self._gap_s
+            if self._t0 is None or paused:
+                self._t0 = now
+                anchor = self._last_returned_arm if self._last_returned_arm is not None else self._q_start_arm
+                self._ramp_anchor = None if anchor is None else anchor.copy()
+            self._last_apply_t = now
 
+            if self._ramp_anchor is not None:
+                alpha = (now - self._t0) / self.soft_start_s
+                if alpha < 1.0:
+                    alpha = max(alpha, 0.0)
+                    goal[:NUM_ARM_JOINTS] = (
+                        (1.0 - alpha) * self._ramp_anchor + alpha * goal[:NUM_ARM_JOINTS]
+                    )
+
+        self._last_returned_arm = goal[:NUM_ARM_JOINTS].copy()
         return goal.astype(np.float32)
