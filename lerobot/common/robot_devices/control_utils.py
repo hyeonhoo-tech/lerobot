@@ -261,8 +261,15 @@ def control_loop(
                 action = {"action": action}
 
         if dataset is not None:
-            frame = {**observation, **action, "task": single_task}
-            dataset.add_frame(frame)
+            settling = getattr(robot, "is_teleop_settling", None)
+            if callable(settling) and settling():
+                # Constraints are still easing to the start pose (e.g. descending to locked_z).
+                # Skip recording and keep the episode timer at zero so episode_time_s counts
+                # from a settled start.
+                start_episode_t = time.perf_counter()
+            else:
+                frame = {**observation, **action, "task": single_task}
+                dataset.add_frame(frame)
 
         if display_cameras and not is_headless():
             image_keys = [key for key in observation if "image" in key]

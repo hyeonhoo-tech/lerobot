@@ -262,6 +262,17 @@ class ManipulatorRobot:
             available_arms.append(arm_id)
         return available_arms
 
+    def is_teleop_settling(self) -> bool:
+        """True while any active teleop constraint is still easing to its start pose.
+
+        Used by the recorder to skip frames (and defer the episode timer) until the
+        end-effector has reached the constrained start position, so the soft-start descent
+        is not captured in the dataset. Returns False if disabled via config.
+        """
+        if not getattr(self.config, "constraint_record_after_settle", True):
+            return False
+        return any(not c.is_settled for c in self._teleop_constraints.values())
+
     def teleop_safety_stop(self):
         if self.robot_type in ["trossen_ai_stationary", "trossen_ai_solo"]:
             for arms in self.leader_arms:

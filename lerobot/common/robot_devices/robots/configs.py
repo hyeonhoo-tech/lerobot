@@ -674,6 +674,9 @@ class TrossenAIStationaryRobotConfig(ManipulatorRobotConfig):
     # Max per-joint change (radians) allowed in one teleop step. Larger jumps (IK branch flip
     # / divergence) are rejected and the follower holds position, preventing sudden fast motion.
     constraint_max_joint_step: float = 0.08
+    # If True, the recorder skips frames (and defers the episode timer) until the end-effector
+    # has eased to its constrained start position, so the soft-start descent is not recorded.
+    constraint_record_after_settle: bool = True
     # Path to the URDF used for IK (z-axis lock). Defaults to the repo's stationary_ai.urdf.
     constraint_urdf_path: str | None = None
     # Path to trossen_arm_description for resolving package:// URIs in the URDF, if needed.

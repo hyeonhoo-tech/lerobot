@@ -164,6 +164,19 @@ class StationaryTeleopConstraint:
     def initialized(self) -> bool:
         return self._initialized
 
+    @property
+    def is_settled(self) -> bool:
+        """True once the soft-start ramp has finished easing to the constrained target.
+
+        False while still ramping (e.g. descending to locked_z at the start of an episode),
+        so the recorder can skip those frames.
+        """
+        if self.soft_start_s <= 0:
+            return True
+        if self._t0 is None:
+            return False  # apply() has not run yet this (re)start
+        return (time.perf_counter() - self._t0) >= self.soft_start_s
+
     def initialize_refs(self, follower_present_pos: np.ndarray) -> None:
         """Capture reference values from the follower's current joints."""
         follower_present_pos = np.asarray(follower_present_pos, dtype=np.float64)
