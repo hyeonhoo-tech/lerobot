@@ -91,6 +91,7 @@ class StationaryTeleopConstraint:
         soft_start_s: float = 2.0,
         max_xy_step: float = 0.01,
         feasible_z_tol: float = 0.02,
+        max_joint_step: float = 0.08,
         ik_iters: int = 80,
         ik_tol: float = 1e-3,
         ik_damping: float = 1e-2,
@@ -105,6 +106,7 @@ class StationaryTeleopConstraint:
         self.soft_start_s = soft_start_s
         self.max_xy_step = max_xy_step
         self.feasible_z_tol = feasible_z_tol
+        self.max_joint_step = max_joint_step
         self.ik_iters = ik_iters
         self.ik_tol = ik_tol
         self.ik_damping = ik_damping
@@ -296,24 +298,32 @@ class StationaryTeleopConstraint:
             free_v = [self.joint_v_idx[j] for j in self.free_arm_joints]
             q = self._solve_ik(q, oMdes, free_v)
 
-            # z-feasibility guard: if the IK solution does not actually hold the locked height
-            # (target unreachable / under-converged), do NOT send it — hold the last good arm
-            # pose instead, so the gripper never dives into the floor.
+            # Candidate arm goal from the IK solution (wrist already overridden in `goal`).
+            candidate_arm = goal[:NUM_ARM_JOINTS].copy()
+            for j in self.free_arm_joints:
+                candidate_arm[j] = q[self.joint_q_idx[j]]
+
+            # Safety guards. Reject the IK solution (hold the last good pose) when:
+            #  (a) it cannot hold the locked height (target unreachable / under-converged), or
+            #  (b) it jumps more than `max_joint_step` rad on any joint in one step (IK branch
+            #      flip / divergence) — this prevents sudden fast/violent motion.
             achieved_z = float(self._fk_pose(q).translation[2])
-            infeasible = self.lock_z and abs(achieved_z - self.locked_z) > self.feasible_z_tol
-            if infeasible and self._last_good_arm is not None:
+            reject = self.lock_z and abs(achieved_z - self.locked_z) > self.feasible_z_tol
+            reason = "out of reach at locked z" if reject else ""
+            if self._last_good_arm is not None and self.max_joint_step > 0:
+                jump = float(np.max(np.abs(candidate_arm - self._last_good_arm)))
+                if jump > self.max_joint_step:
+                    reject = True
+                    reason = f"joint jump {jump:.3f} rad > {self.max_joint_step:.3f}"
+
+            if reject and self._last_good_arm is not None:
                 goal[:NUM_ARM_JOINTS] = self._last_good_arm  # freeze arm; gripper still follows
                 if not self._warned_infeasible:
-                    print(
-                        "[TeleopConstraint] target out of reach at locked z "
-                        f"(would land z={achieved_z:.3f}, want {self.locked_z:.3f}); "
-                        "holding position. Move back into the workspace."
-                    )
+                    print(f"[TeleopConstraint] rejecting IK solution ({reason}); holding position.")
                     self._warned_infeasible = True
             else:
-                for j in self.free_arm_joints:
-                    goal[j] = q[self.joint_q_idx[j]]
-                self._last_good_arm = goal[:NUM_ARM_JOINTS].copy()
+                goal[:NUM_ARM_JOINTS] = candidate_arm
+                self._last_good_arm = candidate_arm.copy()
                 self._warned_infeasible = False
 
         # 3) Soft start: ease the arm joints from the current pose to the constrained goal so

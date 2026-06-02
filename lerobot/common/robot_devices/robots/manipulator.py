@@ -201,6 +201,7 @@ class ManipulatorRobot:
                 soft_start_s=getattr(self.config, "constraint_soft_start_s", 2.0),
                 max_xy_step=getattr(self.config, "constraint_max_xy_step", 0.01),
                 feasible_z_tol=getattr(self.config, "constraint_feasible_z_tol", 0.02),
+                max_joint_step=getattr(self.config, "constraint_max_joint_step", 0.08),
             )
         return constraints
 

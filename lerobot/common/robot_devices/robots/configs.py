@@ -671,6 +671,9 @@ class TrossenAIStationaryRobotConfig(ManipulatorRobotConfig):
     # If the IK cannot hold the locked height within this tolerance (meters), the follower
     # holds its last good pose instead of diving (out-of-reach guard).
     constraint_feasible_z_tol: float = 0.02
+    # Max per-joint change (radians) allowed in one teleop step. Larger jumps (IK branch flip
+    # / divergence) are rejected and the follower holds position, preventing sudden fast motion.
+    constraint_max_joint_step: float = 0.08
     # Path to the URDF used for IK (z-axis lock). Defaults to the repo's stationary_ai.urdf.
     constraint_urdf_path: str | None = None
     # Path to trossen_arm_description for resolving package:// URIs in the URDF, if needed.
