@@ -155,14 +155,9 @@ class StationaryTeleopConstraint:
         self._prev_xy: np.ndarray | None = None  # last commanded EE (x, y) for rate limiting
         self._last_good_arm: np.ndarray | None = None  # last feasible arm goal (z held)
         self._warned_infeasible = False
-        # A loop pause longer than this AND the follower having physically moved (see
-        # _rearm_pose_thresh) re-arms the soft-start. Time alone is not enough, so an
-        # occasional slow frame during recording does not restart the descent.
+        # If apply() has not been called for longer than this (loop paused, e.g. between
+        # warmup and recording), re-arm the soft-start from the current pose to avoid a jump.
         self._gap_s = 0.3
-        # Per-joint difference (rad) between the follower's actual pose and our last commanded
-        # pose that counts as "the arm was repositioned" (e.g. reset to home by
-        # teleop_safety_stop). Above normal servo lag, below a reset jump.
-        self._rearm_pose_thresh = 0.2
         self._initialized = False
 
     @property
@@ -275,38 +270,22 @@ class StationaryTeleopConstraint:
         pin = self._pin
         goal = np.asarray(leader_goal_pos, dtype=np.float64).copy()
 
-        # 0) Re-arm the soft-start when the FOLLOWER has actually been repositioned (e.g. reset
-        # to home by teleop_safety_stop between warmup and recording), so it eases from the real
-        # current pose. A brief slow frame during recording is NOT a reason to re-arm: the loop
-        # just paused, the follower held its last commanded pose (only the leader moved in your
-        # hand), so re-arming there would needlessly restart the descent and silently drop
-        # ~soft_start_s of recording mid-episode. We therefore key off how far the FOLLOWER moved
-        # from our last command, not merely the elapsed time.
+        # 0) Detect a loop pause (gap between apply calls) and re-arm the soft-start from the
+        # follower's ACTUAL current pose, since it may have been moved (e.g. reset to home by
+        # teleop_safety_stop) while the loop was not running.
         now = time.perf_counter()
-        gap = self._last_apply_t is not None and (now - self._last_apply_t) > self._gap_s
-        self._last_apply_t = now
-
-        present_arm = None
-        if follower_present_pos is not None:
-            present_arm = np.asarray(follower_present_pos, dtype=np.float64)[:NUM_ARM_JOINTS]
-
-        rearm = self._t0 is None
-        if gap and not rearm:
-            if present_arm is not None and self._last_returned_arm is not None:
-                moved = float(np.max(np.abs(present_arm - self._last_returned_arm)))
-                rearm = moved > self._rearm_pose_thresh
-            elif self._last_returned_arm is None:
-                rearm = True  # no baseline to compare against yet; re-arm to be safe
-
-        if rearm:
+        paused = self._last_apply_t is not None and (now - self._last_apply_t) > self._gap_s
+        if self._t0 is None or paused:
             self._t0 = now
-            if present_arm is not None:
+            if follower_present_pos is not None:
+                present_arm = np.asarray(follower_present_pos, dtype=np.float64)[:NUM_ARM_JOINTS]
                 self._ramp_anchor = present_arm.copy()
                 self._prev_xy = self._fk_pose(self._build_q(present_arm)).translation[:2].copy()
                 self._last_good_arm = None  # don't compare jumps against a stale pre-pause pose
             else:
                 anchor = self._last_returned_arm if self._last_returned_arm is not None else self._q_start_arm
                 self._ramp_anchor = None if anchor is None else anchor.copy()
+        self._last_apply_t = now
 
         # 1) Joint-space wrist lock (skipped when orientation lock is on).
         for j, ref in self.wrist_refs.items():
