@@ -270,9 +270,19 @@ def main():
     parser.add_argument("--package-root", type=str, default=None, help="Path to trossen_arm_description for resolving package:// URIs.")
     parser.add_argument("--episodes", type=int, nargs="*", default=None, help="Episode indices to process (default: all).")
     parser.add_argument("--push-to-hub", action="store_true", help="Push output dataset to HuggingFace Hub.")
+    parser.add_argument(
+        "--tolerance-s",
+        type=float,
+        default=1e-4,
+        help="Timestamp sync tolerance in seconds when loading the source dataset. Raise this "
+        "(e.g. 0.01) if loading fails with a timestamp sync error due to recording fps jitter. "
+        "Timestamps are not used by the FK computation, so loosening this is safe here.",
+    )
     args = parser.parse_args()
 
-    dataset = LeRobotDataset(args.repo_id, root=args.root, episodes=args.episodes)
+    dataset = LeRobotDataset(
+        args.repo_id, root=args.root, episodes=args.episodes, tolerance_s=args.tolerance_s
+    )
     print(f"Loaded dataset: {dataset.num_frames} frames, {dataset.num_episodes} episodes.")
 
     add_fk_to_dataset(
