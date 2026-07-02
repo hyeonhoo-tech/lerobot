@@ -218,6 +218,15 @@ class ManipulatorRobot:
                 "names": ["height", "width", "channels"],
                 "info": None,
             }
+            if getattr(cam, "use_depth", False):
+                # Depth maps are saved losslessly as 16-bit grayscale PNGs (millimeters),
+                # never video-encoded, regardless of the `video` recording setting.
+                cam_ft[f"{key}_depth"] = {
+                    "dtype": "image",
+                    "shape": (cam.height, cam.width, 1),
+                    "names": ["height", "width", "channels"],
+                    "info": None,
+                }
         return cam_ft
 
     @property
@@ -604,9 +613,15 @@ class ManipulatorRobot:
 
         # Capture images from cameras
         images = {}
+        depth_maps = {}
         for name in self.cameras:
             before_camread_t = time.perf_counter()
-            images[name] = self.cameras[name].async_read()
+            cam_output = self.cameras[name].async_read()
+            if isinstance(cam_output, tuple):
+                images[name], depth_map = cam_output
+                depth_maps[name] = torch.from_numpy(depth_map[..., None])
+            else:
+                images[name] = cam_output
             images[name] = torch.from_numpy(images[name])
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
@@ -619,6 +634,8 @@ class ManipulatorRobot:
             action_dict["action"] = action
         for name in self.cameras:
             obs_dict[f"observation.images.{name}"] = images[name]
+            if name in depth_maps:
+                obs_dict[f"observation.images.{name}_depth"] = depth_maps[name]
 
         return obs_dict, action_dict
 
@@ -646,9 +663,15 @@ class ManipulatorRobot:
 
         # Capture images from cameras
         images = {}
+        depth_maps = {}
         for name in self.cameras:
             before_camread_t = time.perf_counter()
-            images[name] = self.cameras[name].async_read()
+            cam_output = self.cameras[name].async_read()
+            if isinstance(cam_output, tuple):
+                images[name], depth_map = cam_output
+                depth_maps[name] = torch.from_numpy(depth_map[..., None])
+            else:
+                images[name] = cam_output
             images[name] = torch.from_numpy(images[name])
             self.logs[f"read_camera_{name}_dt_s"] = self.cameras[name].logs["delta_timestamp_s"]
             self.logs[f"async_read_camera_{name}_dt_s"] = time.perf_counter() - before_camread_t
@@ -658,6 +681,8 @@ class ManipulatorRobot:
         obs_dict["observation.state"] = state
         for name in self.cameras:
             obs_dict[f"observation.images.{name}"] = images[name]
+            if name in depth_maps:
+                obs_dict[f"observation.images.{name}_depth"] = depth_maps[name]
         return obs_dict
 
     def send_action(self, action: torch.Tensor) -> torch.Tensor:

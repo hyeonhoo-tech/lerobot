@@ -753,29 +753,32 @@ class TrossenAIStationaryRobotConfig(ManipulatorRobotConfig):
             # on another USB hub or PCIe card.
             self.cameras: dict[str, CameraConfig] = {
                 "cam_high": IntelRealSenseCameraConfig(
-                    serial_number=130322271752,
+                    serial_number=146322077603,
                     fps=30,
                     width=640,
                     height=480,
+                    use_depth=True,
                 ),
-                # "cam_low": IntelRealSenseCameraConfig(
-                #     serial_number=130322272628,
-                #     fps=30,
-                #     width=640,
-                #     height=480,
-                # ),
+                "cam_low": IntelRealSenseCameraConfig(
+                    serial_number=207222071967,
+                    fps=30,
+                    width=640,
+                    height=480,
+                    use_depth=True,
+                ),
                 # "cam_left_wrist": IntelRealSenseCameraConfig(
                 #     serial_number=128422271347,
                 #     fps=30,
                 #     width=640,
                 #     height=480,
                 # ),
-                "cam_right_wrist": IntelRealSenseCameraConfig(
-                    serial_number=130322273480,
-                    fps=30,
-                    width=640,
-                    height=480,
-                ),
+                # "cam_right_wrist": IntelRealSenseCameraConfig(
+                #     serial_number=130322273480,
+                #     fps=30,
+                #     width=640,
+                #     height=480,
+                #     use_depth=True,
+                # ),
             }
 
         else:

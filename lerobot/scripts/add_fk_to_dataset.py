@@ -248,6 +248,22 @@ def add_fk_to_dataset(
 
             episode_buffer[vid_key] = img_paths
 
+        # Handle non-video image features (e.g. depth maps): these aren't stored as a
+        # separate video file, so every frame must be re-saved from the decoded source.
+        # Use `with_format(None)` to bypass the dataset's torch/ToTensor transform, which
+        # would otherwise mangle 16-bit single-channel depth PNGs into (1, H, W) int16
+        # tensors instead of leaving them as PIL images.
+        raw_ep_rows = dataset.hf_dataset.select(range(from_idx, to_idx)).with_format(None)
+        for img_key in dataset.meta.image_keys:
+            src_images = raw_ep_rows[img_key]
+            img_paths = []
+            for frame_i, img in enumerate(src_images):
+                img_path = new_dataset._get_image_file_path(ep_idx, img_key, frame_i)
+                img_path.parent.mkdir(parents=True, exist_ok=True)
+                new_dataset._save_image(img, img_path)
+                img_paths.append(str(img_path))
+            episode_buffer[img_key] = img_paths
+
         new_dataset.save_episode(episode_data=episode_buffer)
 
     if push_to_hub:
