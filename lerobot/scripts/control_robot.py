@@ -369,7 +369,7 @@ def record(
                 )
 
     if cfg.push_to_hub:
-        dataset.push_to_hub(tags=cfg.tags, private=cfg.private)
+        dataset.push_to_hub(tags=cfg.tags, private=cfg.private, upload_large_folder=True)
 
     if cfg.urdf_path is not None:
         log_say("Computing EEF poses via FK...", cfg.play_sounds)

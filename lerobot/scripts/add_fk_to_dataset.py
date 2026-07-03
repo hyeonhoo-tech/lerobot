@@ -172,6 +172,9 @@ def add_fk_to_dataset(
         features=features_with_fk,
         use_videos=True,
     )
+    # Non-video image features (e.g. depth maps) are re-saved as PNGs one frame at a
+    # time with no shortcut like the video-copy path below, so parallelize the writes.
+    new_dataset.start_image_writer(num_processes=0, num_threads=8)
 
     ep_from = dataset.episode_data_index["from"]
     ep_to = dataset.episode_data_index["to"]
@@ -265,6 +268,8 @@ def add_fk_to_dataset(
             episode_buffer[img_key] = img_paths
 
         new_dataset.save_episode(episode_data=episode_buffer)
+
+    new_dataset.stop_image_writer()
 
     if push_to_hub:
         print("Pushing to Hub...")
